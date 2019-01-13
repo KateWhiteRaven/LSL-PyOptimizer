@@ -251,6 +251,8 @@ Use: {progname} -O help for help on the optimizer control options.
 Comments are always removed in the output, even when using --prettify.
 
 Preprocessor modes:
+    int       Preprocess source using the internal preprocessor
+              (ignores --precmd; accepts --preargs -D, -U and -I)
     ext       Invoke a preprocessor with no default parameters
     mcpp      Invoke mcpp as preprocessor, setting default parameters pertinent
               to it. Implies --precmd=mcpp
@@ -483,7 +485,7 @@ def main(argv):
 
         elif opt in ('-p', '--preproc'):
             preproc = arg.lower()
-            supported = ('ext', 'mcpp', 'gcpp', 'none')
+            supported = ('int', 'ext', 'mcpp', 'gcpp', 'none')
             if preproc not in supported:
                 Usage(argv[0])
                 werr(u"\nUnknown --preproc option: '%s'."
@@ -502,6 +504,9 @@ def main(argv):
 
         elif opt in ('-P', '--prearg'):
             preproc_user_preargs.append(arg)
+
+        elif opt in ('-A', '--postarg'):
+            preproc_user_postargs.append(arg)
 
         elif opt == '--prenodef':
             predefines = False
@@ -659,9 +664,27 @@ def main(argv):
                 return 1
 
         if preproc != 'none':
-            # At this point, for the external preprocessor to work we need the
-            # script as a byte array, not as unicode, but it should be UTF-8.
+            # At this point, for the preprocessor to work we need the script
+            # as a byte array, not as unicode, but it should be UTF-8.
             script = PreparePreproc(script.decode('utf8')).encode('utf8')
+
+        pperrors = False
+        if preproc == 'int':
+            # Use internal preprocessor.
+
+            from cpreproc import Preproc
+            pperrors, script, macros = Preproc(script,
+                preproc_cmdline[1:]).get()
+            if pperrors:
+                preshow = True # Force preshow to display errors
+
+            if 'USE_LAZY_LISTS' in macros:
+                options.add('lazylists')
+            if 'USE_SWITCHES' in macros:
+                options.add('enableswitch')
+            del macros
+
+        elif preproc != 'none':
             if preproc == 'mcpp':
                 # As a special treatment for mcpp, we force it to output its
                 # macros so we can read if USE_xxx are defined. With GCC that
@@ -732,6 +755,11 @@ def main(argv):
                 outf.write(script)
             finally:
                 outf.close()
+
+        if pperrors:
+            sys.stderr.write(u"\n* Errors found during preprocessing\n")
+            return 1
+
         return 0
 
     except Exception as e:
